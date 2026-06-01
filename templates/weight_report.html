@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Weight Report</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <main class="page">
+        <header class="topbar">
+            <div>
+                <h1>Weight Report</h1>
+                <p>Progress toward {{ target_weight }} kg</p>
+            </div>
+            <nav>
+                <a href="{{ url_for('index') }}">Food</a>
+                <a href="{{ url_for('weight') }}">Weight</a>
+                <a href="{{ url_for('calorie_report') }}">Calorie Report</a>
+            </nav>
+        </header>
+
+        {% with messages = get_flashed_messages() %}
+            {% if messages %}
+                <div class="messages">
+                    {% for message in messages %}
+                        <p>{{ message }}</p>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        {% endwith %}
+
+        <section class="panel">
+            <form method="get" class="date-filter">
+                <input type="date" name="start_date" value="{{ start_date }}" required>
+                <input type="date" name="end_date" value="{{ end_date }}" required>
+                <button type="submit">View</button>
+            </form>
+        </section>
+
+        <section class="panel">
+            {% if rows %}
+                <div class="chart-box">
+                    <canvas id="weightChart"></canvas>
+                </div>
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Weight</th>
+                                <th>Target</th>
+                                <th>Notes</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for row in rows %}
+                                <tr>
+                                    <td>{{ row.entry_date }}</td>
+                                    <td>{{ "%.1f"|format(row.weight or 0) }}</td>
+                                    <td>{{ target_weight }}</td>
+                                    <td>{{ row.notes }}</td>
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% else %}
+                <p class="empty">No weight data for this date range.</p>
+            {% endif %}
+        </section>
+    </main>
+
+    {% if rows %}
+        <script>
+            const weightLabels = {{ labels|tojson }};
+            const weightData = {{ weights|tojson }};
+            const targetData = {{ target_values|tojson }};
+
+            new Chart(document.getElementById("weightChart"), {
+                type: "line",
+                data: {
+                    labels: weightLabels,
+                    datasets: [
+                        { label: "Weight", data: weightData, borderColor: "#1f6f5b", backgroundColor: "rgba(31, 111, 91, 0.15)", tension: 0.2 },
+                        { label: "Target", data: targetData, borderColor: "#9b2f2f", borderDash: [6, 6], pointRadius: 0 }
+                    ]
+                },
+                options: { responsive: true, maintainAspectRatio: false }
+            });
+        </script>
+    {% endif %}
+</body>
+</html>

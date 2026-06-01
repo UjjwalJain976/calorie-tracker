@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Edit Food Entry</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <main class="page">
+        <header class="topbar">
+            <div>
+                <h1>Edit Food</h1>
+                <p>Manual edits do not call OpenAI again</p>
+            </div>
+            <nav>
+                <a href="{{ url_for('index', entry_date=entry.entry_date) }}">Food</a>
+                <a href="{{ url_for('weight') }}">Weight</a>
+            </nav>
+        </header>
+
+        {% with messages = get_flashed_messages() %}
+            {% if messages %}
+                <div class="messages">
+                    {% for message in messages %}
+                        <p>{{ message }}</p>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        {% endwith %}
+
+        <section class="panel">
+            <h2>Edit Entry</h2>
+            <form method="post" class="form-grid">
+                <label>
+                    Entry date
+                    <input type="date" name="entry_date" value="{{ entry.entry_date }}" required>
+                </label>
+
+                <label>
+                    Time
+                    <input type="time" name="entry_time" value="{{ entry.entry_time or '' }}">
+                </label>
+
+                <label class="wide">
+                    Food description
+                    <textarea name="food_description" rows="3" required>{{ entry.food_description }}</textarea>
+                </label>
+
+                <label>
+                    Calories
+                    <input type="number" step="0.1" name="calories" value="{{ entry.calories or 0 }}">
+                </label>
+
+                <label>
+                    Protein
+                    <input type="number" step="0.1" name="protein" value="{{ entry.protein or 0 }}">
+                </label>
+
+                <label>
+                    Carbs
+                    <input type="number" step="0.1" name="carbs" value="{{ entry.carbs or 0 }}">
+                </label>
+
+                <label>
+                    Fat
+                    <input type="number" step="0.1" name="fat" value="{{ entry.fat or 0 }}">
+                </label>
+
+                <label>
+                    AI confidence
+                    <select name="ai_confidence">
+                        {% for value in ["low", "medium", "high", "error"] %}
+                            <option value="{{ value }}" {% if entry.ai_confidence == value %}selected{% endif %}>{{ value }}</option>
+                        {% endfor %}
+                    </select>
+                </label>
+
+                <button type="submit">Save Changes</button>
+            </form>
+        </section>
+    </main>
+</body>
+</html>

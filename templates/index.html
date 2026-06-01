@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Calorie Tracker</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <main class="page">
+        <header class="topbar">
+            <div>
+                <h1>Calorie Tracker</h1>
+                <p>Daily food ledger</p>
+            </div>
+            <nav>
+                <a href="{{ url_for('index') }}">Food</a>
+                <a href="{{ url_for('weight') }}">Weight</a>
+                <a href="{{ url_for('calorie_report') }}">Calorie Report</a>
+                <a href="{{ url_for('weight_report') }}">Weight Report</a>
+                <a href="{{ url_for('export_food_csv') }}">Export CSV</a>
+            </nav>
+        </header>
+
+        {% with messages = get_flashed_messages() %}
+            {% if messages %}
+                <div class="messages">
+                    {% for message in messages %}
+                        <p>{{ message }}</p>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        {% endwith %}
+
+        <section class="panel">
+            <h2>Add Food</h2>
+            <form method="post" class="form-grid">
+                <label>
+                    Entry date
+                    <input type="date" name="entry_date" value="{{ selected_date }}" required>
+                </label>
+
+                <label>
+                    Time
+                    <input type="time" name="entry_time">
+                </label>
+
+                <label class="wide">
+                    Food description
+                    <textarea name="food_description" rows="3" placeholder="Example: 2 rotis, dal, rice, and curd" required></textarea>
+                    <span class="helper-note">For better accuracy, include quantity. Example: 2 roti, 1 bowl dal, 1 cup rice, 2 slices watermelon.</span>
+                </label>
+
+                <button type="submit">Estimate and Save</button>
+            </form>
+        </section>
+
+        <section class="totals">
+            <div>
+                <span>Daily limit</span>
+                <strong>{{ daily_calorie_limit }} kcal</strong>
+            </div>
+            <div>
+                <span>Consumed</span>
+                <strong>{{ "%.0f"|format(totals.calories) }}</strong>
+            </div>
+            <div>
+                {% if calories_left >= 0 %}
+                    <span>Calories left today</span>
+                    <strong>{{ "%.0f"|format(calories_left) }} kcal</strong>
+                {% else %}
+                    <span>Over limit by</span>
+                    <strong>{{ "%.0f"|format(-calories_left) }} kcal</strong>
+                {% endif %}
+            </div>
+            <div>
+                <span>Protein</span>
+                <strong>{{ "%.1f"|format(totals.protein) }} g</strong>
+            </div>
+            <div>
+                <span>Carbs</span>
+                <strong>{{ "%.1f"|format(totals.carbs) }} g</strong>
+            </div>
+            <div>
+                <span>Fat</span>
+                <strong>{{ "%.1f"|format(totals.fat) }} g</strong>
+            </div>
+        </section>
+
+        <section class="panel">
+            <div class="section-heading">
+                <h2>Entries for {{ selected_date }}</h2>
+                <form method="get" class="date-filter">
+                    <input type="date" name="entry_date" value="{{ selected_date }}">
+                    <button type="submit">View</button>
+                </form>
+            </div>
+
+            {% if entries %}
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Food</th>
+                                <th>Calories</th>
+                                <th>Protein</th>
+                                <th>Carbs</th>
+                                <th>Fat</th>
+                                <th>Confidence</th>
+                                <th>Edit</th>
+                                <th>Delete</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for entry in entries %}
+                                <tr>
+                                    <td>{{ entry.entry_time or entry.created_at[11:16] }}</td>
+                                    <td>{{ entry.food_description }}</td>
+                                    <td>{{ "%.0f"|format(entry.calories or 0) }}</td>
+                                    <td>{{ "%.1f"|format(entry.protein or 0) }}</td>
+                                    <td>{{ "%.1f"|format(entry.carbs or 0) }}</td>
+                                    <td>{{ "%.1f"|format(entry.fat or 0) }}</td>
+                                    <td>{{ entry.ai_confidence }}</td>
+                                    <td>
+                                        <a class="small-button" href="{{ url_for('edit_food_entry', entry_id=entry.id) }}">Edit</a>
+                                    </td>
+                                    <td>
+                                        <form method="post" action="{{ url_for('delete_food_entry_route', entry_id=entry.id) }}" class="delete-form">
+                                            <input type="hidden" name="entry_date" value="{{ selected_date }}">
+                                            <button type="submit" class="delete-button">Delete</button>
+                                        </form>
+                                    </td>
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% else %}
+                <p class="empty">No food entries for this date yet.</p>
+            {% endif %}
+        </section>
+    </main>
+</body>
+</html>
