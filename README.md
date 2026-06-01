@@ -84,6 +84,8 @@ Build Command: pip install -r requirements.txt
 Start Command: gunicorn app:app
 ```
 
+The included `.python-version` file pins Render to Python 3.11.9 so `psycopg2-binary` installs a compatible wheel. If Render still uses Python 3.14, add an environment variable named `PYTHON_VERSION` with value `3.11.9`, then redeploy with a cleared build cache.
+
 5. Add environment variables in Render:
 
 ```env
