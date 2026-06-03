@@ -133,7 +133,7 @@ def estimate_calories(food_description):
         }
 
         response = client.responses.create(
-            model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+            model=os.getenv("OPENAI_MODEL", "gpt-5.4-mini"),
             input=[
                 {
                     "role": "system",
