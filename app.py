@@ -1,9 +1,11 @@
 import csv
 import io
 import json
+import math
 import os
 from datetime import date, datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -99,20 +101,50 @@ def to_float(value, default=0):
         return default
 
 
-def empty_calorie_estimate():
-    return {
-        "calories": 0,
-        "protein": 0,
-        "carbs": 0,
-        "fat": 0,
-        "ai_confidence": "error",
+class CalorieEstimationError(Exception):
+    """An estimate failed; no nutrition values are available to save."""
+
+
+def log_estimation_error(error):
+    # Never log raw exception text, response bodies, URLs, or credentials.
+    # Use only known diagnostic categories from the SDK's structured error.
+    messages = {
+        "AuthenticationError": "OpenAI authentication failed; check OPENAI_API_KEY",
+        "PermissionDeniedError": "OpenAI access denied; check project/model permissions",
+        "NotFoundError": "OpenAI model or endpoint unavailable; check model access",
+        "RateLimitError": "OpenAI rate limit or quota exceeded",
+        "APITimeoutError": "OpenAI request timed out",
+        "APIConnectionError": "OpenAI connection failed",
+        "BadRequestError": "OpenAI rejected the request parameters",
+        "InternalServerError": "OpenAI service error",
+        "JSONDecodeError": "OpenAI returned invalid JSON",
+        "CalorieEstimationError": "OpenAI estimate missing, incomplete, refused, or invalid",
     }
+    error_type = type(error).__name__
+    safe_message = messages.get(error_type, "OpenAI estimation failed unexpectedly")
+    # Some API errors carry the code only in their message/body, not SDK .code.
+    if error_type == "RateLimitError" and "insufficient_quota" in str(error).lower():
+        safe_message = "OpenAI quota exhausted; check API project billing and credits (insufficient_quota)"
+    if isinstance(error, CalorieEstimationError) and str(error) in (
+        "OPENAI_API_KEY is not configured", "Response did not complete with text",
+        "Response refused", "Response fields do not match the schema",
+        "Invalid confidence", "Invalid nutrition value",
+    ):
+        safe_message = str(error)
+    code = getattr(error, "code", None)
+    if code in ("model_not_found", "insufficient_quota", "rate_limit_exceeded", "invalid_api_key",
+                "unsupported_parameter", "unsupported_value", "invalid_json_schema"):
+        safe_message += f"; code={code}"
+    param = getattr(error, "param", None)
+    if param in ("model", "temperature", "max_tokens", "max_output_tokens", "text.format", "text.format.schema"):
+        safe_message += f"; parameter={param}"
+    app.logger.error("Calorie estimation failed (%s): %s", error_type, safe_message)
 
 
 def estimate_calories(food_description):
     try:
         if not os.getenv("OPENAI_API_KEY"):
-            return empty_calorie_estimate()
+            raise CalorieEstimationError("OPENAI_API_KEY is not configured")
 
         client = OpenAI()
 
@@ -133,7 +165,7 @@ def estimate_calories(food_description):
         }
 
         response = client.responses.create(
-            model=os.getenv("OPENAI_MODEL", "gpt-5.4-mini"),
+            model="gpt-5.4-mini",
             input=[
                 {
                     "role": "system",
@@ -157,21 +189,31 @@ def estimate_calories(food_description):
             },
         )
 
+        if response.status != "completed" or not response.output_text:
+            raise CalorieEstimationError("Response did not complete with text")
+        if any(
+            getattr(content, "type", None) == "refusal"
+            for item in response.output
+            for content in getattr(item, "content", [])
+        ):
+            raise CalorieEstimationError("Response refused")
+
         data = json.loads(response.output_text)
+        if not isinstance(data, dict) or set(data) != set(schema["required"]):
+            raise CalorieEstimationError("Response fields do not match the schema")
         ai_confidence = data.get("ai_confidence")
 
         if ai_confidence not in ["low", "medium", "high"]:
-            return empty_calorie_estimate()
+            raise CalorieEstimationError("Invalid confidence")
 
-        return {
-            "calories": to_float(data.get("calories")),
-            "protein": to_float(data.get("protein")),
-            "carbs": to_float(data.get("carbs")),
-            "fat": to_float(data.get("fat")),
-            "ai_confidence": ai_confidence,
-        }
-    except Exception:
-        return empty_calorie_estimate()
+        for field in ("calories", "protein", "carbs", "fat"):
+            value = data[field]
+            if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
+                raise CalorieEstimationError("Invalid nutrition value")
+        return data
+    except Exception as error:
+        log_estimation_error(error)
+        raise CalorieEstimationError("Unable to estimate nutrition") from None
 
 
 def insert_food_entry(entry_date, entry_time, food_description, calories, protein, carbs, fat, ai_confidence):
@@ -421,7 +463,28 @@ def test_db():
 
 @app.route("/", methods=["GET", "POST"])
 def index():
-    selected_date = request.values.get("entry_date") or date.today().isoformat()
+    today = datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat()
+    # Old entry_date URLs remain viewing filters (edit/delete links use them).
+    selected_date = (
+        request.form.get("view_date") if request.method == "POST" else None
+    ) or request.args.get("view_date") or request.args.get("entry_date") or today
+    entry_date = (
+        request.form.get("entry_date") if request.method == "POST"
+        else request.args.get("add_date")
+    ) or today
+
+    try:
+        # HTML date inputs submit ISO values, regardless of browser display locale.
+        if any(date.fromisoformat(value).isoformat() != value for value in (entry_date, selected_date)):
+            raise ValueError
+    except ValueError:
+        flash("Please select a valid date using the date picker (YYYY-MM-DD).")
+        # Do not send a malformed viewing date to PostgreSQL while showing the error.
+        try:
+            selected_date = date.fromisoformat(selected_date).isoformat()
+        except ValueError:
+            selected_date = today
+        return render_food_page(selected_date, entry_date), 400
 
     if request.method == "POST":
         entry_time = request.form.get("entry_time", "").strip()
@@ -429,18 +492,20 @@ def index():
 
         if not food_description:
             flash("Please type what you ate.")
-            return redirect(url_for("index", entry_date=selected_date))
+            return render_food_page(selected_date, entry_date), 400
 
         if not entry_time:
-            entry_time = datetime.now().strftime("%H:%M")
+            entry_time = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%H:%M")
 
-        nutrition = estimate_calories(food_description)
-        if nutrition["ai_confidence"] == "error":
-            flash("OpenAI estimate failed, so this entry was saved with 0 values.")
+        try:
+            nutrition = estimate_calories(food_description)
+        except CalorieEstimationError:
+            flash("OpenAI could not estimate this food. Nothing was saved. Please retry using Estimate and Save.")
+            return render_food_page(selected_date, entry_date), 502
 
         try:
             insert_food_entry(
-                selected_date,
+                entry_date,
                 entry_time,
                 food_description,
                 nutrition["calories"],
@@ -451,11 +516,15 @@ def index():
             )
         except Exception as error:
             flash(database_error_message(error))
-            return redirect(url_for("index", entry_date=selected_date))
+            return render_food_page(selected_date, entry_date), 500
 
         flash("Food entry saved.")
-        return redirect(url_for("index", entry_date=selected_date))
+        return redirect(url_for("index", view_date=selected_date, add_date=entry_date))
 
+    return render_food_page(selected_date, entry_date)
+
+
+def render_food_page(selected_date, entry_date):
     try:
         entries = fetch_food_entries_by_date(selected_date)
         totals = calculate_daily_totals(selected_date)
@@ -471,6 +540,7 @@ def index():
         "index.html",
         entries=entries,
         selected_date=selected_date,
+        entry_date=entry_date,
         totals=totals,
         daily_calorie_limit=DAILY_CALORIE_LIMIT,
         calories_left=calories_left,
@@ -534,7 +604,7 @@ def delete_food_entry_route(entry_id):
     except Exception as error:
         flash(database_error_message(error))
 
-    return redirect(url_for("index", entry_date=selected_date))
+    return redirect(url_for("index", view_date=selected_date, add_date=request.form.get("add_date")))
 
 
 @app.route("/weight", methods=["GET", "POST"])

@@ -34,20 +34,21 @@
 
         <section class="panel">
             <h2>Add Food</h2>
-            <form method="post" class="form-grid">
+            <form method="post" action="{{ url_for('index') }}" class="form-grid">
+                <input type="hidden" name="view_date" value="{{ selected_date }}">
                 <label>
                     Entry date
-                    <input type="date" name="entry_date" value="{{ selected_date }}" required>
+                    <input type="date" id="food-entry-date" name="entry_date" value="{{ entry_date }}" required>
                 </label>
 
                 <label>
                     Time
-                    <input type="time" name="entry_time">
+                    <input type="time" name="entry_time" value="{{ request.form.get('entry_time', '') }}">
                 </label>
 
                 <label class="wide">
                     Food description
-                    <textarea name="food_description" rows="3" placeholder="Example: 2 rotis, dal, rice, and curd" required></textarea>
+                    <textarea name="food_description" rows="3" placeholder="Example: 2 rotis, dal, rice, and curd" required>{{ request.form.get('food_description', '') }}</textarea>
                     <span class="helper-note">For better accuracy, include quantity. Example: 2 roti, 1 bowl dal, 1 cup rice, 2 slices watermelon.</span>
                 </label>
 
@@ -90,8 +91,9 @@
         <section class="panel">
             <div class="section-heading">
                 <h2>Entries for {{ selected_date }}</h2>
-                <form method="get" class="date-filter">
-                    <input type="date" name="entry_date" value="{{ selected_date }}">
+                <form method="get" action="{{ url_for('index') }}" class="date-filter" id="date-filter">
+                    <input type="hidden" name="add_date" value="{{ entry_date }}">
+                    <input type="date" name="view_date" value="{{ selected_date }}">
                     <button type="submit">View</button>
                 </form>
             </div>
@@ -128,6 +130,7 @@
                                     <td>
                                         <form method="post" action="{{ url_for('delete_food_entry_route', entry_id=entry.id) }}" class="delete-form">
                                             <input type="hidden" name="entry_date" value="{{ selected_date }}">
+                                            <input type="hidden" name="add_date" value="{{ entry_date }}">
                                             <button type="submit" class="delete-button">Delete</button>
                                         </form>
                                     </td>
@@ -141,5 +144,15 @@
             {% endif %}
         </section>
     </main>
+    <script>
+        // Preserve an unsaved Add Food date when filtering or deleting entries.
+        document.querySelectorAll('form').forEach(function (form) {
+            if (form.elements.add_date) {
+                form.addEventListener('submit', function () {
+                    this.elements.add_date.value = document.getElementById('food-entry-date').value;
+                });
+            }
+        });
+    </script>
 </body>
 </html>
