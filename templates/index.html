@@ -138,6 +138,10 @@
         </section>
     </main>
     <script>
+        // Keep the rendered selection, but let the next refresh use India-local today.
+        // Selection links and food-action redirects still reach Flask with their date.
+        window.history.replaceState(null, '', {{ url_for('index') | tojson }});
+
         // Reload entries and all totals without submitting the food form.
         document.getElementById('food-entry-date').addEventListener('change', function () {
             if (this.value && this.checkValidity()) {

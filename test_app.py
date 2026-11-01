@@ -222,6 +222,18 @@ class FoodDateTests(unittest.TestCase):
                 self.assert_date(self.client.get("/"), today)
                 self.assertEqual(clock.now.call_args.args[0].key, "Asia/Kolkata")
 
+    def test_historical_page_cleans_reload_url_and_root_uses_today(self):
+        response = self.client.get("/?entry_date=2026-06-01")
+        self.assert_date(response, "2026-06-01")
+        self.assertIn('window.history.replaceState(null, \'\', "/")', response.get_data(as_text=True))
+        # The browser reloads the URL set by replaceState, not the historical URL.
+        with patch.object(tracker, "datetime") as clock:
+            clock.now.return_value = datetime(2026, 11, 1, 12)
+            response = self.client.get("/")
+        self.assert_date(response, "2026-11-01")
+        self.fetch_food_entries_by_date.assert_called_with("2026-11-01")
+        self.calculate_daily_totals.assert_called_with("2026-11-01")
+
     def test_historical_entry_is_not_replaced_by_today(self):
         response = self.client.post("/", data=dict(self.form, entry_date="2020-02-29"), follow_redirects=True)
         self.assertEqual(self.insert_food_entry.call_args.args[0], "2020-02-29")
