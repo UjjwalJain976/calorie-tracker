@@ -35,10 +35,9 @@
         <section class="panel">
             <h2>Add Food</h2>
             <form method="post" action="{{ url_for('index') }}" class="form-grid">
-                <input type="hidden" name="view_date" value="{{ selected_date }}">
                 <label>
                     Entry date
-                    <input type="date" id="food-entry-date" name="entry_date" value="{{ entry_date }}" required>
+                    <input type="date" id="food-entry-date" name="entry_date" value="{{ selected_date }}" required>
                 </label>
 
                 <label>
@@ -91,11 +90,6 @@
         <section class="panel">
             <div class="section-heading">
                 <h2>Entries for {{ selected_date }}</h2>
-                <form method="get" action="{{ url_for('index') }}" class="date-filter" id="date-filter">
-                    <input type="hidden" name="add_date" value="{{ entry_date }}">
-                    <input type="date" name="view_date" value="{{ selected_date }}">
-                    <button type="submit">View</button>
-                </form>
             </div>
 
             {% if entries %}
@@ -125,12 +119,11 @@
                                     <td>{{ "%.1f"|format(entry.fat or 0) }}</td>
                                     <td>{{ entry.ai_confidence }}</td>
                                     <td>
-                                        <a class="small-button" href="{{ url_for('edit_food_entry', entry_id=entry.id) }}">Edit</a>
+                                        <a class="small-button" href="{{ url_for('edit_food_entry', entry_id=entry.id, selected_date=selected_date) }}">Edit</a>
                                     </td>
                                     <td>
                                         <form method="post" action="{{ url_for('delete_food_entry_route', entry_id=entry.id) }}" class="delete-form">
                                             <input type="hidden" name="entry_date" value="{{ selected_date }}">
-                                            <input type="hidden" name="add_date" value="{{ entry_date }}">
                                             <button type="submit" class="delete-button">Delete</button>
                                         </form>
                                     </td>
@@ -145,12 +138,12 @@
         </section>
     </main>
     <script>
-        // Preserve an unsaved Add Food date when filtering or deleting entries.
-        document.querySelectorAll('form').forEach(function (form) {
-            if (form.elements.add_date) {
-                form.addEventListener('submit', function () {
-                    this.elements.add_date.value = document.getElementById('food-entry-date').value;
-                });
+        // Reload entries and all totals without submitting the food form.
+        document.getElementById('food-entry-date').addEventListener('change', function () {
+            if (this.value && this.checkValidity()) {
+                const url = new URL({{ url_for('index') | tojson }}, window.location.origin);
+                url.searchParams.set('entry_date', this.value);
+                window.location.assign(url.toString());
             }
         });
     </script>

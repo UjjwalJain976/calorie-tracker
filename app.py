@@ -464,27 +464,19 @@ def test_db():
 @app.route("/", methods=["GET", "POST"])
 def index():
     today = datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat()
-    # Old entry_date URLs remain viewing filters (edit/delete links use them).
+    # The submitted shared date controls writes; URL parameters only control GETs.
     selected_date = (
-        request.form.get("view_date") if request.method == "POST" else None
-    ) or request.args.get("view_date") or request.args.get("entry_date") or today
-    entry_date = (
         request.form.get("entry_date") if request.method == "POST"
-        else request.args.get("add_date")
+        else request.args.get("entry_date")
     ) or today
 
     try:
-        # HTML date inputs submit ISO values, regardless of browser display locale.
-        if any(date.fromisoformat(value).isoformat() != value for value in (entry_date, selected_date)):
+        # HTML date inputs submit ISO values regardless of display locale.
+        if date.fromisoformat(selected_date).isoformat() != selected_date:
             raise ValueError
     except ValueError:
         flash("Please select a valid date using the date picker (YYYY-MM-DD).")
-        # Do not send a malformed viewing date to PostgreSQL while showing the error.
-        try:
-            selected_date = date.fromisoformat(selected_date).isoformat()
-        except ValueError:
-            selected_date = today
-        return render_food_page(selected_date, entry_date), 400
+        return render_food_page(today), 400
 
     if request.method == "POST":
         entry_time = request.form.get("entry_time", "").strip()
@@ -492,7 +484,7 @@ def index():
 
         if not food_description:
             flash("Please type what you ate.")
-            return render_food_page(selected_date, entry_date), 400
+            return render_food_page(selected_date), 400
 
         if not entry_time:
             entry_time = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%H:%M")
@@ -501,11 +493,11 @@ def index():
             nutrition = estimate_calories(food_description)
         except CalorieEstimationError:
             flash("OpenAI could not estimate this food. Nothing was saved. Please retry using Estimate and Save.")
-            return render_food_page(selected_date, entry_date), 502
+            return render_food_page(selected_date), 502
 
         try:
             insert_food_entry(
-                entry_date,
+                selected_date,
                 entry_time,
                 food_description,
                 nutrition["calories"],
@@ -516,15 +508,15 @@ def index():
             )
         except Exception as error:
             flash(database_error_message(error))
-            return render_food_page(selected_date, entry_date), 500
+            return render_food_page(selected_date), 500
 
         flash("Food entry saved.")
-        return redirect(url_for("index", view_date=selected_date, add_date=entry_date))
+        return redirect(url_for("index", entry_date=selected_date))
 
-    return render_food_page(selected_date, entry_date)
+    return render_food_page(selected_date)
 
 
-def render_food_page(selected_date, entry_date):
+def render_food_page(selected_date):
     try:
         entries = fetch_food_entries_by_date(selected_date)
         totals = calculate_daily_totals(selected_date)
@@ -540,7 +532,6 @@ def render_food_page(selected_date, entry_date):
         "index.html",
         entries=entries,
         selected_date=selected_date,
-        entry_date=entry_date,
         totals=totals,
         daily_calorie_limit=DAILY_CALORIE_LIMIT,
         calories_left=calories_left,
@@ -549,15 +540,17 @@ def render_food_page(selected_date, entry_date):
 
 @app.route("/food/edit/<int:entry_id>", methods=["GET", "POST"])
 def edit_food_entry(entry_id):
+    selected_date = request.form.get("selected_date") or request.args.get("selected_date")
     if request.method == "POST":
-        entry_date = request.form.get("entry_date") or date.today().isoformat()
+        entry_date = request.form.get("entry_date") or datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat()
+        selected_date = selected_date or entry_date
         entry_time = request.form.get("entry_time", "").strip()
         food_description = request.form.get("food_description", "").strip()
         ai_confidence = request.form.get("ai_confidence", "").strip()
 
         if not food_description:
             flash("Please type what you ate.")
-            return redirect(url_for("edit_food_entry", entry_id=entry_id))
+            return render_template("edit_food.html", entry=request.form, selected_date=selected_date), 400
 
         if ai_confidence not in ["low", "medium", "high", "error"]:
             ai_confidence = "error"
@@ -576,27 +569,27 @@ def edit_food_entry(entry_id):
             )
         except Exception as error:
             flash(database_error_message(error))
-            return redirect(url_for("edit_food_entry", entry_id=entry_id))
+            return render_template("edit_food.html", entry=request.form, selected_date=selected_date), 500
 
         flash("Food entry updated.")
-        return redirect(url_for("index", entry_date=entry_date))
+        return redirect(url_for("index", entry_date=selected_date))
 
     try:
         entry = get_food_entry_by_id(entry_id)
     except Exception as error:
         flash(database_error_message(error))
-        return redirect(url_for("index"))
+        return redirect(url_for("index", entry_date=selected_date))
 
     if not entry:
         flash("Food entry not found.")
-        return redirect(url_for("index"))
+        return redirect(url_for("index", entry_date=selected_date))
 
-    return render_template("edit_food.html", entry=entry)
+    return render_template("edit_food.html", entry=entry, selected_date=selected_date or entry["entry_date"])
 
 
 @app.route("/food/delete/<int:entry_id>", methods=["POST"])
 def delete_food_entry_route(entry_id):
-    selected_date = request.form.get("entry_date") or date.today().isoformat()
+    selected_date = request.form.get("entry_date") or datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat()
 
     try:
         delete_food_entry(entry_id)
@@ -604,7 +597,7 @@ def delete_food_entry_route(entry_id):
     except Exception as error:
         flash(database_error_message(error))
 
-    return redirect(url_for("index", view_date=selected_date, add_date=request.form.get("add_date")))
+    return redirect(url_for("index", entry_date=selected_date))
 
 
 @app.route("/weight", methods=["GET", "POST"])

@@ -174,78 +174,108 @@ class FoodDateTests(unittest.TestCase):
             mock = patch.object(tracker, name, return_value=result)
             setattr(self, name, mock.start())
             self.addCleanup(mock.stop)
-        self.form = {"entry_date": "2026-11-01", "view_date": "2026-06-01",
-                     "entry_time": "12:15", "food_description": "banana"}
+        self.form = {"entry_date": "2026-11-01", "entry_time": "12:15", "food_description": "banana"}
 
-    def assert_dates(self, response, entry_date, view_date):
-        self.assertEqual(DateInputParser(response.get_data(as_text=True)).dates,
-                         {"entry_date": entry_date, "view_date": view_date})
+    def assert_date(self, response, selected_date):
+        html = response.get_data(as_text=True)
+        self.assertEqual(DateInputParser(html).dates, {"entry_date": selected_date})
+        self.assertEqual(html.count('type="date"'), 1)
+        self.assertIn("Entries for " + selected_date, html)
+        self.assertNotIn('>View</button>', html)
 
-    def test_posted_date_wins_over_conflicting_url_and_reaches_insert(self):
+    def test_posted_date_wins_over_old_url_and_reaches_insert_and_summary(self):
         self.insert_food_entry.side_effect = self.real_insert
         with patch.object(tracker, "get_db_connection") as connection:
             response = self.client.post("/?entry_date=2026-06-01", data=self.form, follow_redirects=True)
             cursor = connection.return_value.__enter__.return_value.cursor.return_value.__enter__.return_value
             self.assertEqual(cursor.execute.call_args.args[1][0], "2026-11-01")
-        self.assert_dates(response, "2026-11-01", "2026-06-01")
-        self.fetch_food_entries_by_date.assert_called_with("2026-06-01")
-        self.calculate_daily_totals.assert_called_with("2026-06-01")
+        self.assert_date(response, "2026-11-01")
+        self.fetch_food_entries_by_date.assert_called_with("2026-11-01")
+        self.calculate_daily_totals.assert_called_with("2026-11-01")
 
-    def test_view_filter_preserves_independent_entry_date(self):
-        response = self.client.get("/?view_date=2020-02-29&add_date=2026-11-01")
-        self.assert_dates(response, "2026-11-01", "2020-02-29")
-        self.fetch_food_entries_by_date.assert_called_with("2020-02-29")
+    def test_june_and_november_records_and_all_totals_follow_shared_date(self):
+        for selected, calories in [("2026-06-01", 600), ("2026-11-01", 2000)]:
+            with self.subTest(date=selected):
+                self.fetch_food_entries_by_date.return_value = [dict(
+                    NUTRITION, id=7, entry_date=selected, entry_time="12:00",
+                    food_description="Food for " + selected)]
+                self.calculate_daily_totals.return_value = dict(calories=calories, protein=31, carbs=42, fat=13)
+                response = self.client.get("/?entry_date=" + selected)
+                self.assert_date(response, selected)
+                self.fetch_food_entries_by_date.assert_called_with(selected)
+                self.calculate_daily_totals.assert_called_with(selected)
+                html = response.get_data(as_text=True)
+                for value in ["Food for " + selected, f"<strong>{calories}</strong>",
+                              "<strong>31.0 g</strong>", "<strong>42.0 g</strong>",
+                              "<strong>13.0 g</strong>", f"<strong>{abs(1800-calories)} kcal</strong>"]:
+                    self.assertIn(value, html)
+                self.assertIn("Over limit by" if calories > 1800 else "Calories left today", html)
+                self.assertIn("selected_date=" + selected, html)
         self.insert_food_entry.assert_not_called()
+        self.estimate_calories.assert_not_called()
 
     def test_today_changes_at_indian_midnight_without_restart(self):
         for instant, today in [(datetime(2026, 11, 1, 18, 29, 59, tzinfo=timezone.utc), "2026-11-01"),
                                (datetime(2026, 11, 1, 18, 30, tzinfo=timezone.utc), "2026-11-02")]:
             with self.subTest(instant=instant), patch.object(tracker, "datetime") as clock:
                 clock.now.side_effect = lambda tz: instant.astimezone(tz)
-                self.assert_dates(self.client.get("/"), today, today)
+                self.assert_date(self.client.get("/"), today)
                 self.assertEqual(clock.now.call_args.args[0].key, "Asia/Kolkata")
-
-    def test_legacy_view_url_does_not_set_add_food_default(self):
-        with patch.object(tracker, "datetime") as clock:
-            clock.now.return_value = datetime(2026, 11, 1, 12)
-            self.assert_dates(self.client.get("/?entry_date=2026-06-01"), "2026-11-01", "2026-06-01")
 
     def test_historical_entry_is_not_replaced_by_today(self):
         response = self.client.post("/", data=dict(self.form, entry_date="2020-02-29"), follow_redirects=True)
         self.assertEqual(self.insert_food_entry.call_args.args[0], "2020-02-29")
-        self.assert_dates(response, "2020-02-29", "2026-06-01")
+        self.assert_date(response, "2020-02-29")
 
-    def test_ai_and_database_failures_preserve_both_dates(self):
+    def test_ai_database_and_validation_failures_preserve_selected_date(self):
         self.estimate_calories.side_effect = tracker.CalorieEstimationError
         response = self.client.post("/?entry_date=2026-06-01", data=self.form)
         self.assertEqual(response.status_code, 502)
-        self.assert_dates(response, "2026-11-01", "2026-06-01")
+        self.assert_date(response, "2026-11-01")
         self.insert_food_entry.assert_not_called()
         self.estimate_calories.side_effect = None
         self.insert_food_entry.side_effect = RuntimeError("Database unavailable")
         response = self.client.post("/", data=self.form)
         self.assertEqual(response.status_code, 500)
-        self.assert_dates(response, "2026-11-01", "2026-06-01")
+        self.assert_date(response, "2026-11-01")
+        response = self.client.post("/", data=dict(self.form, food_description=""))
+        self.assertEqual(response.status_code, 400)
+        self.assert_date(response, "2026-11-01")
 
     def test_invalid_html_date_is_not_saved_or_sent_to_ai(self):
         for value in ["01/11/2026", "2026-02-30", "20261101"]:
             with self.subTest(value=value):
                 response = self.client.post("/", data=dict(self.form, entry_date=value))
                 self.assertEqual(response.status_code, 400)
+                self.assertNotEqual(self.fetch_food_entries_by_date.call_args.args[0], value)
         self.estimate_calories.assert_not_called()
         self.insert_food_entry.assert_not_called()
 
-    def test_delete_redirect_preserves_both_dates(self):
-        with patch.object(tracker, "delete_food_entry") as delete:
-            response = self.client.post("/food/delete/7", data={
-                "entry_date": "2026-06-01", "add_date": "2026-11-01"}, follow_redirects=True)
-        delete.assert_called_once_with(7)
-        self.assert_dates(response, "2026-11-01", "2026-06-01")
+    def test_delete_success_and_failure_preserve_selected_date(self):
+        for error in [None, RuntimeError("Database unavailable")]:
+            with patch.object(tracker, "delete_food_entry", side_effect=error) as delete:
+                response = self.client.post("/food/delete/7", data={
+                    "entry_date": "2026-06-01"}, follow_redirects=True)
+            delete.assert_called_once_with(7)
+            self.assert_date(response, "2026-06-01")
 
-    def test_invalid_view_date_never_reaches_database(self):
-        response = self.client.get("/?view_date=not-a-date&add_date=2026-11-01")
+    def test_edit_preserves_viewing_date_even_when_record_date_changes(self):
+        entry = dict(NUTRITION, id=7, entry_date="2026-06-01", entry_time="12:00", food_description="banana")
+        with patch.object(tracker, "get_food_entry_by_id", return_value=entry):
+            response = self.client.get("/food/edit/7?selected_date=2026-06-01")
+        self.assertIn('name="selected_date" value="2026-06-01"', response.get_data(as_text=True))
+        form = dict(entry, entry_date="2026-11-01", selected_date="2026-06-01")
+        with patch.object(tracker, "update_food_entry") as update:
+            response = self.client.post("/food/edit/7", data=form, follow_redirects=True)
+        self.assertEqual(update.call_args.args[1], "2026-11-01")
+        self.assert_date(response, "2026-06-01")
+        with patch.object(tracker, "update_food_entry", side_effect=RuntimeError("Database unavailable")):
+            response = self.client.post("/food/edit/7", data=form)
+        self.assertEqual(response.status_code, 500)
+        self.assertIn('name="selected_date" value="2026-06-01"', response.get_data(as_text=True))
+        response = self.client.post("/food/edit/7", data=dict(form, food_description=""))
         self.assertEqual(response.status_code, 400)
-        self.assertNotEqual(self.fetch_food_entries_by_date.call_args.args[0], "not-a-date")
+        self.assertIn('name="selected_date" value="2026-06-01"', response.get_data(as_text=True))
 
 
 class SDKCompatibilityTests(unittest.TestCase):

@@ -14,7 +14,7 @@
                 <p>Manual edits do not call OpenAI again</p>
             </div>
             <nav>
-                <a href="{{ url_for('index', entry_date=entry.entry_date) }}">Food</a>
+                <a href="{{ url_for('index', entry_date=selected_date) }}">Food</a>
                 <a href="{{ url_for('weight') }}">Weight</a>
             </nav>
         </header>
@@ -32,6 +32,7 @@
         <section class="panel">
             <h2>Edit Entry</h2>
             <form method="post" class="form-grid">
+                <input type="hidden" name="selected_date" value="{{ selected_date }}">
                 <label>
                     Entry date
                     <input type="date" name="entry_date" value="{{ entry.entry_date }}" required>
